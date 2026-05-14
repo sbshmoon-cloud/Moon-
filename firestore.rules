@@ -1,0 +1,97 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Common helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // User Profile Rules
+    match /users/{userId} {
+      function isValidUser(data) {
+        return data.keys().hasAll(['uid', 'email', 'createdAt']) &&
+               data.uid == request.auth.uid &&
+               data.email is string && data.email.size() <= 256 &&
+               data.createdAt == request.time;
+      }
+
+      allow read: if isOwner(userId);
+      allow create: if isSignedIn() && isValidId(userId) && userId == request.auth.uid && isValidUser(incoming());
+      allow update: if isOwner(userId) && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'updatedAt']) &&
+                      incoming().updatedAt == request.time;
+    }
+
+    // Course Rules
+    match /courses/{courseId} {
+      function isValidCourse(data) {
+        return data.keys().hasAll(['userId', 'title', 'color', 'createdAt']) &&
+               data.userId == request.auth.uid &&
+               data.title is string && data.title.size() <= 100 &&
+               data.color is string && data.color.size() <= 20 &&
+               data.createdAt == request.time;
+      }
+
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(courseId) && isValidCourse(incoming());
+      allow update: if isOwner(existing().userId) && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['title', 'code', 'instructor', 'color', 'schedule', 'updatedAt']) &&
+                      incoming().updatedAt == request.time;
+      allow delete: if isOwner(existing().userId);
+    }
+
+    // Task Rules
+    match /tasks/{taskId} {
+      function isValidTask(data) {
+        return data.keys().hasAll(['userId', 'title', 'dueDate', 'status', 'createdAt']) &&
+               data.userId == request.auth.uid &&
+               data.title is string && data.title.size() <= 200 &&
+               data.status in ['todo', 'in_progress', 'completed'] &&
+               data.dueDate is timestamp &&
+               data.createdAt == request.time;
+      }
+
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(taskId) && isValidTask(incoming());
+      allow update: if isOwner(existing().userId) &&
+                      incoming().diff(existing()).affectedKeys().hasAny(['title', 'description', 'dueDate', 'status', 'priority', 'subTasks', 'updatedAt']) &&
+                      incoming().updatedAt == request.time;
+      allow delete: if isOwner(existing().userId);
+    }
+
+    // StudySession Rules
+    match /studySessions/{sessionId} {
+      function isValidSession(data) {
+        return data.keys().hasAll(['userId', 'duration', 'startTime']) &&
+               data.userId == request.auth.uid &&
+               data.duration is int && data.duration > 0 &&
+               data.startTime is timestamp;
+      }
+
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(sessionId) && isValidSession(incoming());
+      allow delete: if isOwner(existing().userId);
+    }
+  }
+}
